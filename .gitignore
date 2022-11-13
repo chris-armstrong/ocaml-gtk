@@ -7,10 +7,8 @@ GLib.ml
 GObject.ml
 Gio.ml
 Gdk.ml
-Gtk.ml
 ml_GLib.c
 ml_GObject.c
 ml_Gio.c
 ml_Gdk.c
-ml_Gtk.c
 _build
