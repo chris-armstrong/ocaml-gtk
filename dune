@@ -86,10 +86,3 @@
  (name example0_oo)
  (modules example0_oo)
  (libraries ocamlgtk))
-
-(executable
- (name generate_bindings)
- (modules generate_bindings xml_helpers)
- (libraries xmlm )
- (flags :standard -w -37 -w -32)
- (preprocess (pps ppx_deriving.show)))

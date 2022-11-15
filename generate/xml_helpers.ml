@@ -16,7 +16,7 @@ let tag name i =
   | `El_start ((_, n), attrs) as s ->
       if n = name then (
         let s = input i in
-        Format.printf "tag> start %s - %a\n" name pp_signal s;
+        (* Format.printf "tag> start %s - %a\n" name pp_signal s; *)
         match input i with
         | `El_end -> attrs
         | s -> raise (expected_end_tag name s))
@@ -28,7 +28,7 @@ let tag_opt name i =
   | `El_start ((_, n), attrs) ->
       if n = name then (
         let s = input i in
-        Format.printf "tag_opt> start %s - %a\n" name pp_signal s;
+        (* Format.printf "tag_opt> start %s - %a\n" name pp_signal s; *)
         let res = Some attrs in
         match input i with
         | `El_end -> res
@@ -39,7 +39,7 @@ let tag_opt name i =
 let block inner name i =
   match peek i with
   | `El_start ((_, n), attrs) as s ->
-      Format.printf "block> start %s %a\n" name pp_signal s;
+      (* Format.printf "block> start %s %a\n" name pp_signal s; *)
       if n = name then
         let _ = input i in
         let res = inner i ~attrs in
@@ -52,7 +52,7 @@ let block inner name i =
 let block_opt inner name i =
   match peek i with
   | `El_start ((_, n), attrs) as s ->
-      Format.printf "block_opt> start %s %a\n" name pp_signal s;
+      (* Format.printf "block_opt> start %s %a\n" name pp_signal s; *)
       if n = name then
         let _ = input i in
         let res = Some (inner i ~attrs) in
@@ -70,7 +70,7 @@ let rec ignore_block ?(level = -1) i =
   | `El_end -> if level = 0 then IgnoredTag else ignore_block ~level:(level - 1) i
   | _ -> raise (Failure "Unbalanced when ignoring block")
 
-let open_source filename ~(ns : string -> string option) =
+let open_file_source ~(ns : string -> string option) filename =
   let in_chan = In_channel.open_bin filename in
   let source = `Channel in_chan in
   make_input ~ns ~strip:true source
