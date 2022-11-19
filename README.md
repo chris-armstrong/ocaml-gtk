@@ -26,11 +26,17 @@ On Ubuntu 22.04.1, these system packages are required:
 * python3-minimal
 * libpython3.10-stdlib
 
+On MacOSX with HomeBrew, this is:
+
+* gtk4
+* gobject-introspection
+
 ## Compiling
 
 1. Set the PREFIX variable to the location where girepository-1.0 typelibs are installed
     - if using Ubuntu packages on x86-64, this is `/usr/lib/x86_64-linux-gnu`
     - if using Linux Brew, this is `/home/linuxbrew/.linuxbrew/lib`
+    - if using Brew on MacOS X, this is `/usr/local/lib`
 2. Run `dune build`
 3. Built example programme can be found at `_build/default/example0.exe`
 
