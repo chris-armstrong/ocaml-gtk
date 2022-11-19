@@ -35,20 +35,31 @@
    %{env:PREFIX=/usr/local}/girepository-1.0/Gio-2.0.typelib)))
 
 (rule
+ (targets Gtk-4.0.xml)
+ (action
+  (run
+   g-ir-generate
+   -o
+   Gtk-4.0.xml
+   %{env:PREFIX=/usr/local}/girepository-1.0/Gtk-4.0.typelib)))
+
+(rule
  (deps
-  (file generate_bindings.py)
-  (glob_files *.xml))
+  (:gen ./generate/generate_bindings.exe)
+  (:xml_files (glob_files *.xml)))
  (targets
   ml_GLib.c
   ml_GObject.c
   ml_Gdk.c
   ml_Gio.c
+  ml_Gtk.c
   GLib.ml
   Gio.ml
   GObject.ml
-  Gdk.ml)
+  Gdk.ml
+  Gtk.ml)
  (action
-  (run python3 ./generate_bindings.py)))
+  (run ./generate/generate_bindings.exe %{xml_files})))
 
 (executable
  (name discover)
@@ -63,8 +74,8 @@
 (library
  (name ocamlgtk)
  (wrapped false)
- ; (deps (filename Gtk.ml) (filename GObject.ml) (filename gobject0.ml) (filename Gio.ml Gdk)
- (modules Gtk GObject gobject0 Gio Gdk)
+ ; (deps (filename Gtk.ml) (filename GObject.ml) (filename gobject0.ml) (filename Gio.mlGdk)
+ ( modules Gtk GObject gobject0 Gio Gdk)
  (flags :standard -no-strict-sequence -w -7)
  (c_library_flags
   (:include gtk4-libs.sexp))
@@ -77,12 +88,12 @@
    (:include gtk4-flags.sexp)
    (:include gtk4-libs.sexp))))
 
-(executable
- (name example0)
- (modules example0)
- (libraries ocamlgtk))
+; (executable
+;  (name example0)
+;  (modules example0)
+;  (libraries ocamlgtk))
 
-(executable
- (name example0_oo)
- (modules example0_oo)
- (libraries ocamlgtk))
+; (executable
+;  (name example0_oo)
+;  (modules example0_oo)
+;  (libraries ocamlgtk))

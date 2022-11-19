@@ -48,47 +48,12 @@ read_inner_types ?(types = []) i = match peek i with
     | _ -> raise (Failure "unknown")
 
 let read_type i = read_type_ i
-(* let rec read_inner_types ?(types = []) i =
-  match peek i with
-  | `El_start ((_, "type"), attrs) ->
-      let _ = input i in
-      let _ = input i in
-      attr "name" attrs :: read_inner_types ~types i
-  | `El_end -> types
-  | s -> raise (expected_start_tag "type" s)
-
-let read_type i ~attrs:_ =
-  let res =
-    match input i with
-    | `El_start ((_, "type"), attrs) -> (
-        let name = attr "name" attrs in
-        let inner_types = read_inner_types i in
-        match inner_types with
-        | [] -> SimpleTypeRef name
-        | _ -> ComplexTypeRef (name, inner_types))
-    | `El_start ((_, "array"), attrs) ->
-        let length = attr_opt "length" attrs |> Option.map int_of_string in
-        let zero_terminated =
-          attr_opt "zero-terminated" attrs
-          |> Option.map (fun x -> x = "1")
-          |> Option.value ~default:false
-        in
-        let fixed_size =
-          attr_opt "fixed-size" attrs |> Option.map int_of_string
-        in
-        let type_name = tag "type" i |> attr "name" in
-        ArrayTypeRef (type_name, { length; zero_terminated; fixed_size })
-    | s -> raise (expected_start_tag "array or type" s)
-  in
-  let s = input i in
-  Format.printf "Type close signal %a\n" pp_signal s;
-  res *)
 
 let read_constant i =
   block
     (fun i ~attrs ->
       Constant
-        ( attr "name" attrs,
+        (
           { value = attr "value" attrs; type_ = read_type i } ))
     "constant" i
 
@@ -265,7 +230,7 @@ let read_class i =
       let signals = read_signals i in
       let virtual_methods = read_virtual_methods i in
       Class
-        ( attr "name" attrs,
+        (
           {
             parent = attr_opt "parent" attrs;
             abstract = false (* FIXME *);
@@ -281,19 +246,23 @@ let read_class i =
           } ))
     "class" i
 
-let read_entity name i =
-  match name with
-  | "constant" -> Some (read_constant i)
-  | "class" -> Some (read_class i)
+let read_entity tag attrs i =
+  let descriptor = {
+    name = attr "name" attrs;
+    glibTypeName = attr_opt "type-name" attrs;
+  } in
+  match tag with
+  | "constant" -> Some (descriptor, read_constant i)
+  | "class" -> Some (descriptor, read_class i)
   | _ ->
       let _ = ignore_block i in
       None
 
-let rec read_entities ?(entities : entityType list = []) i =
+let rec read_entities ?(entities = []) i =
   match peek i with
-  | `El_start ((_, name), _) -> (
+  | `El_start ((_, tag), attrs) -> (
       (* Printf.printf "Reading entity %s\n" name; *)
-      let entity = read_entity name i in
+      let entity = read_entity tag attrs i in
       match entity with
       | Some entity -> read_entities ~entities:(entity::entities) i
       | None -> read_entities ~entities i)
@@ -301,7 +270,7 @@ let rec read_entities ?(entities : entityType list = []) i =
       (* Format.printf "End read entities: %a\n" pp_signal s; *)
       List.rev entities
 
-let rec read_namespaces ?(namespaces : namespaceType list = []) i =
+let rec read_namespaces ?(namespaces = []) i =
   match
     block_opt
       (fun i ~attrs ->
@@ -315,7 +284,7 @@ let rec read_namespaces ?(namespaces : namespaceType list = []) i =
             read_entities i ))
       "namespace" i
   with
-  | Some namespace -> namespace :: read_namespaces ~namespaces i
+  | Some namespace -> read_namespaces ~namespaces:(namespace::namespaces) i
   | None -> namespaces
 
 let read_repository input =

@@ -1,5 +1,8 @@
 open Parse_gobject_model
 open Gobject_model
+open Pretty_print
+open Escape
+open Entity
 
 (* Format.printf "structure %a\n" Gobject_model.pp_repositoryType rep *)
 
@@ -30,78 +33,87 @@ let print_c_start cf =
   cf "#include <caml/fail.h>";
   cf "#include \"ml_gobject0.h\""
 
-let rec find_ancestors ?(ancestors = []) namespace parent all_entities_by_namespace =
-  match parent with
-  (* final parent *)
-  (* | "GObject.Object" -> Ok (List.rev ((namespace, parent) :: ancestors)) *)
-  | _ -> (
-      let split_parent = String.split_on_char '.' parent in
-      let (namespace, parent) = (
-        match split_parent with
-        | [single_parent] -> (namespace, single_parent)
-        | [new_namespace; new_parent] -> (new_namespace, new_parent)
-        | _ -> raise (Failure (Printf.sprintf "Cannot process namespaced class \"%s\"" parent))
-      ) in
-      let namespace_classes = List.assoc namespace all_entities_by_namespace in
-      match List.assoc_opt parent namespace_classes with
-      (* follow to parent *)
-      | Some (Some new_parent) ->
-          find_ancestors ~ancestors:((namespace, parent) :: ancestors) namespace new_parent
-            all_entities_by_namespace
-      (* empty parent *)
-      | Some None -> Ok (List.rev ((namespace, parent) :: ancestors))
-      | None -> Error ("Could not find parent of " ^ namespace ^ "." ^ parent))
-
-type class_with_parent = string * string option [@@deriving show]
-
-(* Return all the class entities as a string pair in the form (class_name, parent_name) *)
-let classes_with_parent_from_entities entities =
-  entities
-  |> List.filter_map (function
-       | Class (name, { parent; _ }) -> Some (name, parent)
-       | _ -> None)
-
-let pp_comma = (fun ppf () -> Format.fprintf ppf ", @ ")
-let pp_arrow = (fun ppf () -> Format.fprintf ppf " -> ")
-let pp_string_pair = (fun ppf (x, y) -> Format.fprintf ppf "%s.%s" x y)
-
-let print_class_ancestors _ namespace entities all_entities_by_namespace =
-  let namespace_classes = classes_with_parent_from_entities entities in
-  let all_classes_with_parent_by_namespace = List.map (
-    fun (namespace, entities) -> (namespace, classes_with_parent_from_entities entities)
-  ) all_entities_by_namespace in
-  (* Format.printf "classes with parents: %a\n\n"
-    (Format.pp_print_list ~pp_sep:pp_comma pp_class_with_parent)
-    namespace_classes; *)
-  List.iter
-    (fun (name, parent) ->
-      let ancestors =
-        match parent with
-        | Some parent -> find_ancestors namespace parent all_classes_with_parent_by_namespace
-        | None -> Ok []
+let rec find_ancestors
+    (all_classes_by_entity_name : (entityDescriptor * 'a) EntityMap.t)
+    ?(ancestors = Ok []) ((entity_ns, entity_name), (_, class_type)) =
+  CCOption.map_or ~default:ancestors
+    (fun parent_joined_name ->
+      let parent_entity_name = map_entity_name entity_ns parent_joined_name in
+      let parent_opt =
+        EntityMap.get parent_entity_name all_classes_by_entity_name
       in
-      match ancestors with
-      | Ok [] ->
-          Format.printf "%s :-> <root>\n" name
-      | Ok ancestors ->
-          Format.printf "%s :-> %a\n" name
-            (Format.pp_print_list ~pp_sep:pp_arrow pp_string_pair)
-            ancestors
-      | Error error -> Format.printf "%s failed ancestor test: %s\n" name error)
-    namespace_classes
+      CCResult.(
+        let* parent =
+          CCOption.to_result
+            (Format.sprintf "Could not find parent entity %s for %s.%s"
+               parent_joined_name entity_ns entity_name)
+            parent_opt
+        in
+        let* ancestors = ancestors in
+        let new_ancestors = (parent_entity_name, parent) :: ancestors in
+        find_ancestors all_classes_by_entity_name ~ancestors:(Ok new_ancestors)
+          (parent_entity_name, parent)))
+    class_type.parent
 
-let process_namespace namespace all_entities_by_namespace =
-  match namespace with
-  | Namespace ({ name; _ }, entities) ->
-      (* let ml_file = Out_channel.open_text (namespace.name ^ ".ml") in
-      let ml = Printf.fprintf ml_file in
-      let c_file = Out_channel.open_text (namespace.name ^ ".c") in
-      let cf = Printf.fprintf c_file in
-      print_ml_start (fun m -> ml "%s\n" m);
-      print_c_start (fun c -> cf "%s\n" c); *)
-      print_class_ancestors (fun _ -> ()) name entities all_entities_by_namespace
-      (* Out_channel.close ml_file;
-      Out_channel.close c_file *)
+let print_class_ancestors ml all_classes all_classes_by_entity_name =
+  all_classes
+  |> List.map (fun entity ->
+         let ancestors = find_ancestors all_classes_by_entity_name entity in
+         (entity, ancestors))
+  |> List.iter (fun ((class_entity_name, (er, _)), ancestor_res) ->
+         match ancestor_res with
+         | Ok ancestors ->
+             let ancestor_entities =
+               List.map (fun (_, (er, _)) -> er) ancestors
+             in
+             let entity_chain = er :: (List.rev ancestor_entities) in
+             ml
+               (Format.asprintf "type %s = [%a] obj" (ml_name er)
+                  (Format.pp_print_list ~pp_sep:pp_pipe Format.pp_print_string)
+                  (entity_chain
+                  |> List.map c_type_name
+                  |> List.map (fun x -> "`" ^ x)))
+         | Error e ->
+             Format.eprintf "Error finding ancestors for %a: %s" pp_string_pair
+               class_entity_name e)
+
+let get_classes_from_namespace namespace =
+  (match namespace with Namespace ({ name; _ }, entities) -> (name, entities))
+  |> fun (namespace, entities) ->
+  CCList.filter_map
+    (function
+      | er, Class cr -> Some ((namespace, er.name), (er, cr)) | _ -> None)
+    entities
+
+let process_namespaces namespaces =
+  let all_classes_by_entity_name =
+    namespaces
+    |> CCList.flat_map get_classes_from_namespace
+    |> Entity.EntityMap.of_list
+  in
+  namespaces
+  |> List.iter (fun namespace ->
+         match namespace with
+         | Namespace (({ name; _ } as ns), entities) ->
+             let ml_file = Out_channel.open_text (name ^ ".ml") in
+             let ml = Printf.fprintf ml_file "%s\n" in
+             let c_file = Out_channel.open_text ("ml_" ^ name ^ ".c") in
+             let cf = Printf.fprintf c_file "%s\n" in
+             print_ml_start ml;
+             print_c_start cf;
+             let all_classes =
+               get_classes_from_namespace (Namespace (ns, entities))
+             in
+             print_class_ancestors ml all_classes all_classes_by_entity_name;
+             (* print_class_ancestors ml name entities all_entities_by_namespace; *)
+             Out_channel.close ml_file;
+             Out_channel.close c_file)
+
+(* entity name as namespace * name *)
+let get_namespaces_from_repositories repositories =
+  repositories
+  |> CCList.filter_map (function Repository (namespaces, _) -> Some namespaces)
+  |> CCList.flatten
 
 let parse filenames =
   filenames
@@ -109,32 +121,22 @@ let parse filenames =
          let source =
            Xml_helpers.open_file_source ~ns:namespace_gobject filename
          in
-         try read source with
-          | Failure x -> (Printf.eprintf "Error reading %s: %s" filename x; raise (Failure x)))
+         try read source
+         with Failure x ->
+           Printf.eprintf "Error reading %s: %s" filename x;
+           raise (Failure x))
 
 let generate () =
-  let repositories =
-    parse
-      [
-        "GObject-2.0.xml";
-        "GLib-2.0.xml";
-        "Gio-2.0.xml";
-        "Gdk-4.0.xml";
-        "Gtk-4.0.xml";
-      ]
-  in
-  let namespaces =
-    repositories
-    |> List.map (fun rep ->
-           match rep with Repository (namespaces, _) -> namespaces)
-    |> List.flatten
-  in
-  let all_entities_by_namespace =
-    namespaces
-    |> List.map (function Namespace ({ name; _ }, entities) -> (name, entities))
-  in
-  List.iter
-    (fun namespace -> process_namespace namespace all_entities_by_namespace)
-    namespaces
+  let files = List.tl (Sys.argv |> Array.to_list) in
+  Format.printf "Processing GObject entries: %a"
+    (Format.pp_print_list ~pp_sep:pp_comma Format.pp_print_string)
+    files;
+  let repositories = parse files in
+  let all_namespaces = get_namespaces_from_repositories repositories in
+  process_namespaces all_namespaces;
+  ()
+
+(* let namespaces = all_namespaces_from_repositories repositories in
+   process_namespaces namespaces *)
 
 let _ = generate ()

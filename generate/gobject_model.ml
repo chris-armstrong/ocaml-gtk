@@ -107,16 +107,22 @@ type classRecord = {
 }
 [@@deriving show]
 
-type entityType =
-  | Constant of string * constantRecord
-  | Class of string * classRecord
-  | Interface of string
-  | Record of string
-  | Enumeration of string
-  | StringEntity of string
+type entityDescriptor = {
+  name: string;
+  glibTypeName: string option;
+}
 [@@deriving show]
 
-type namespaceType = Namespace of namespaceRecord * entityType list
+type entityType =
+  | Constant of constantRecord
+  | Class of classRecord
+  | Interface of entityDescriptor
+  | Record of entityDescriptor
+  | Enumeration of entityDescriptor
+  | StringEntity of entityDescriptor
+[@@deriving show]
+
+type namespaceType = Namespace of namespaceRecord * (entityDescriptor * entityType) list
 [@@deriving show]
 
 type includeType = Include of string * string [@@deriving show]

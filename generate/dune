@@ -1,6 +1,6 @@
 
 (executable
  (name generate_bindings)
- (libraries xmlm )
+ (libraries xmlm containers)
  (flags :standard -w -37 -w -32 -w -26)
  (preprocess (pps ppx_deriving.show)))
