@@ -136,7 +136,7 @@
    -fPIC
    -Wno-deprecated-declarations
    (:include gtk4-flags.sexp)
-   (:include gtk4-libs.sexp))))
+   )))
 
 ; (executable
 ;  (name example0)
