@@ -51,6 +51,7 @@ let ml_keywords =
     "true";
     "try";
     "type";
+    "unit";
     "val";
     "virtual";
     "when";
@@ -63,6 +64,9 @@ let escape_ml_keyword name =
   | true -> name ^ "_"
   | false -> name
 
+let escape_c_keyword name =
+  (if name = "value" then "value_" else name)
+
 let pascal_case_to_snake_case: (string -> string) = fun name ->
   name |> String.to_seq
   |> Seq.mapi (fun i c ->
@@ -73,6 +77,27 @@ let pascal_case_to_snake_case: (string -> string) = fun name ->
            | false -> Char.escaped c)
   |> List.of_seq |> (String.concat "")
 
-let ml_name er = Gobject_model.(er.name) |> pascal_case_to_snake_case |> escape_ml_keyword
+let ml_name0 name = name |> pascal_case_to_snake_case |> escape_ml_keyword
+let ml_name name = String.cat (ml_name0 name) "_"
+
+let cs_name name = name |> CCString.mapi (fun i c -> 
+  match i with
+  | 0 -> CCChar.uppercase_ascii c 
+  | _ -> c) |> (fun n ->
+    match String.get n 0 with
+    | '0' | '1' | '2' | '3' | '4' | '5' |'6' |'7' | '8'| '9' -> "NN" ^ n
+    | _ -> n
+    )
 
 let c_type_name er = Gobject_model.(Option.value ~default:er.name er.glibTypeName)
+
+let make_c_func_name namespace class_name func_name = Format.sprintf "ml_%s_%s_%s" namespace class_name func_name
+
+let ml_namespace namespace = CCString.mapi (fun i c ->
+  match i with 
+  | 0 -> CCChar.uppercase_ascii c
+  | _ -> CCChar.lowercase_ascii c)
+  namespace
+
+let qualified_name context_namespace (ns, name) =
+  if ns = context_namespace then name else (ns) ^ "." ^ name

@@ -11,3 +11,10 @@ let map_entity_name binding_namespace entity_joined_name = match CCString.split_
   | [entity_ns; entity_name] -> (entity_ns, entity_name)
   | [entity_name] -> (binding_namespace, entity_name)
   | _ -> raise (Failure (Format.asprintf "Could not parse entity name: \"%s\"" entity_joined_name))
+
+
+  let make_all_entities namespaces =
+    namespaces
+    |> CCList.flat_map Gobject_model.(function Namespace ({ name; _ }, entities) ->
+           List.map (fun (er, e) -> ((name, er.name), (er, e))) entities)
+    |> EntityMap.of_list

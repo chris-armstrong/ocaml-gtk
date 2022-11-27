@@ -1,4 +1,22 @@
 (rule
+ (targets Pango-1.0.xml)
+ (action
+  (run
+   g-ir-generate
+   -o
+   Pango-1.0.xml
+   %{env:PREFIX=/usr/local}/girepository-1.0/Pango-1.0.typelib)))
+
+(rule
+ (targets cairo-1.0.xml)
+ (action
+  (run
+   g-ir-generate
+   -o
+   cairo-1.0.xml
+   %{env:PREFIX=/usr/local}/girepository-1.0/cairo-1.0.typelib)))
+
+(rule
  (targets GLib-2.0.xml)
  (action
   (run
@@ -8,6 +26,24 @@
    %{env:PREFIX=/usr/local}/girepository-1.0/GLib-2.0.typelib)))
 
 (rule
+ (targets Graphene-1.0.xml)
+ (action
+  (run
+   g-ir-generate
+   -o
+   Graphene-1.0.xml
+   %{env:PREFIX=/usr/local}/girepository-1.0/Graphene-1.0.typelib)))
+
+(rule
+ (targets Gsk-4.0.xml)
+ (action
+  (run
+   g-ir-generate
+   -o
+   Gsk-4.0.xml
+   %{env:PREFIX=/usr/local}/girepository-1.0/Gsk-4.0.typelib)))
+
+(rule
  (targets GObject-2.0.xml)
  (action
   (run
@@ -15,6 +51,15 @@
    -o
    GObject-2.0.xml
    %{env:PREFIX=/usr/local}/girepository-1.0/GObject-2.0.typelib)))
+
+(rule
+ (targets GdkPixbuf-2.0.xml)
+ (action
+  (run
+   g-ir-generate
+   -o
+   GdkPixbuf-2.0.xml
+   %{env:PREFIX=/usr/local}/girepository-1.0/GdkPixbuf-2.0.typelib)))
 
 (rule
  (targets Gdk-4.0.xml)
@@ -53,11 +98,17 @@
   ml_Gdk.c
   ml_Gio.c
   ml_Gtk.c
+  ml_Pango.c
+  ml_Gsk.c
   GLib.ml
   Gio.ml
   GObject.ml
   Gdk.ml
-  Gtk.ml)
+  Gtk.ml
+  Pango.ml
+  Gsk.ml
+  GdkPixbuf.ml
+  )
  (action
   (run ./generate/generate_bindings.exe %{xml_files})))
 
@@ -74,8 +125,7 @@
 (library
  (name ocamlgtk)
  (wrapped false)
- ; (deps (filename Gtk.ml) (filename GObject.ml) (filename gobject0.ml) (filename Gio.mlGdk)
- ( modules Gtk GObject gobject0 Gio Gdk)
+ (modules Gtk GObject gobject0 Gio Gdk GLib Pango Gsk GdkPixbuf)
  (flags :standard -no-strict-sequence -w -7)
  (c_library_flags
   (:include gtk4-libs.sexp))

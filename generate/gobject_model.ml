@@ -43,6 +43,12 @@ type parameterRecord = {
 }
 [@@deriving show]
 
+type callbackRecord = {
+  return_value : returnValueRecord;
+  parameters : parameterRecord list;
+}
+[@@deriving show]
+
 type classMethodRecord = {
   name : string;
   attributes : attribute list;
@@ -107,19 +113,56 @@ type classRecord = {
 }
 [@@deriving show]
 
+type recordRecord = {
+  fields : fieldRecord list;
+  constructor : classConstructorRecord list;
+  methods : classMethodRecord list;
+  functions : functionRecord list;
+}
+[@@deriving show]
+
+type interfaceRecord = {
+  attributes: attribute list;
+  prerequisites: string list;
+  methods : classMethodRecord list;
+  functions : functionRecord list;
+  properties : classPropertyRecord list;
+  signals : signalRecord list;
+  virtual_methods : virtualMethodRecord list;
+}
+[@@deriving show]
+
+type memberRecord = {
+  name: string;
+  value: string;
+  attributes: attribute list;
+}
+[@@deriving show]
+
+type bitfieldRecord = {
+  members: memberRecord list;
+}
+[@@deriving show]
+
 type entityDescriptor = {
   name: string;
   glibTypeName: string option;
 }
 [@@deriving show]
 
+type enumerationRecord = {
+  members: memberRecord list;
+}
+[@@deriving show]
+
 type entityType =
   | Constant of constantRecord
   | Class of classRecord
-  | Interface of entityDescriptor
-  | Record of entityDescriptor
-  | Enumeration of entityDescriptor
-  | StringEntity of entityDescriptor
+  | Callback of callbackRecord
+  | Enumeration of enumerationRecord
+  | Interface of interfaceRecord
+  | Bitfield of bitfieldRecord
+  | Record of recordRecord
 [@@deriving show]
 
 type namespaceType = Namespace of namespaceRecord * (entityDescriptor * entityType) list
