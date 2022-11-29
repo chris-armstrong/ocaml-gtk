@@ -169,21 +169,41 @@ let map_entity_relationship this_ns parent =
       else AnotherNamespaceParent (parent_ns, parent_name))
     parent
 
+let type_remaining_by_classes = fun classes ->
+  let class_names = List.map (fun c -> c.name) classes in
+  function 
+  | SimpleTypeRef x -> List.exists (fun c -> c = x) class_names
+  (* FIXME: complex type support will need to be resolved here *)
+  | _ -> true
+
 (** 
-  sort classes by their dependencies on one another. only looks at parent-relationship in same namespace *)
+  sort classes by their dependencies on one another *)
 let rec sort_by_dependencies ?(sorted_classes = []) = function
   | [] -> List.rev sorted_classes
   | all_classes -> (
       let free_classes, stuck_classes =
         List.partition
-          (fun ((ns, _), (_, { parent; _ })) ->
-            match map_entity_relationship ns parent with
+          (fun ((ns, _), (_, { parent; constructor; methods; _ })) ->
+            let type_in_remaining = type_remaining_by_classes sorted_classes in
+            let parent_dependency = (match map_entity_relationship ns parent with
             | NoParent -> true
             | AnotherNamespaceParent _ -> true
             | SameNamespaceParent parent_name ->
                 List.exists
                   (fun ((_, name), (_, _)) -> name = parent_name)
-                  sorted_classes)
+                  sorted_classes) in
+            let constructor_dependency = List.exists (fun constructor  ->
+              let parameter_types = List.map (fun (p: parameterRecord) -> p.type_) constructor.parameters in
+              let return_type = constructor.return_value.type_ in
+              List.exists (type_remaining_by_classes sorted_classes) (return_type::parameter_types) 
+            ) constructor in
+            let method_dependency = List.exists (fun method_ ->
+              let parameter_types = List.map (fun (p: parameterRecord) -> p.type_) method_.parameters in
+              let return_type = method_.return_value.type_ in
+              List.exists (type_remaining_by_classes sorted_classes) (return_type::parameter_types) 
+            ) methods in
+            parent_dependency && (!constructor_dependency || !method_dependency)
+          )
           all_classes
       in
       match free_classes with
@@ -199,6 +219,7 @@ type typeMapping = {
   ml_value_to_gobj_value_macro : string -> string;
   gobj_value_to_ml_value_macro : string -> string;
   ml_arg_macro : string -> string;
+  ml_return_type_macro: string -> string;
 }
 
 type parameterMapping = {
@@ -215,13 +236,15 @@ let calculate_type_values env = function
           (* FIXME: stored as ints but uses opaque type *)
           (fun v -> sprintf "Long_val(%s)" v),
           (fun v -> sprintf "Val_long(%s)" v),
-          fun v -> sprintf "%s" v )
+          (fun v -> v),
+          fun v -> v )
   | SimpleTypeRef "gint8" ->
       Some
         ( "int",
           "int",
           (fun v -> sprintf "Long_val(%s)" v),
           (fun v -> sprintf "Val_long(%s)" v),
+          (fun v -> v),
           fun v -> v )
   | SimpleTypeRef "guint8" ->
       Some
@@ -229,6 +252,7 @@ let calculate_type_values env = function
           "int",
           (fun v -> sprintf "Long_val(%s)" v),
           (fun v -> sprintf "Val_long(%s)" v),
+          (fun v -> v),
           fun v -> v )
   | SimpleTypeRef "gint16" ->
       Some
@@ -236,6 +260,7 @@ let calculate_type_values env = function
           "int",
           (fun v -> sprintf "Long_val(%s)" v),
           (fun v -> sprintf "Val_long(%s)" v),
+          (fun v -> v),
           fun v -> v )
   | SimpleTypeRef "guint16" ->
       Some
@@ -243,6 +268,7 @@ let calculate_type_values env = function
           "int",
           (fun v -> sprintf "Long_val(%s)" v),
           (fun v -> sprintf "Val_long(%s)" v),
+          (fun v -> v),
           fun v -> v )
   | SimpleTypeRef "gint32" ->
       Some
@@ -250,6 +276,7 @@ let calculate_type_values env = function
           "Int32.t",
           (fun v -> sprintf "Int32_val(%s)" v),
           (fun v -> sprintf "caml_copy_int32(%s)" v),
+          (fun v -> v),
           fun v -> v )
   | SimpleTypeRef "guint32" ->
       Some
@@ -257,6 +284,7 @@ let calculate_type_values env = function
           "Int32.t",
           (fun v -> sprintf "Int32_val(%s)" v),
           (fun v -> sprintf "caml_copy_int32(%s)" v),
+          (fun v -> v),
           fun v -> v )
   | SimpleTypeRef "gint64" ->
       Some
@@ -264,6 +292,7 @@ let calculate_type_values env = function
           "Int64.t",
           (fun v -> sprintf "Int64_val(%s)" v),
           (fun v -> sprintf "caml_copy_int64(%s)" v),
+          (fun v -> v),
           fun v -> v )
   | SimpleTypeRef "guint64" ->
       Some
@@ -271,6 +300,7 @@ let calculate_type_values env = function
           "Int64.t",
           (fun v -> sprintf "Int64_val(%s)" v),
           (fun v -> sprintf "Val_int64(%s)" v),
+          (fun v -> v),
           fun v -> v )
   | SimpleTypeRef "gfloat" ->
       Some
@@ -278,6 +308,7 @@ let calculate_type_values env = function
           "float",
           (fun v -> sprintf "Double_val(%s)" v),
           (fun v -> sprintf "caml_copy_double(%s)" v),
+          (fun v -> v),
           fun v -> v )
   | SimpleTypeRef "gdouble" ->
       Some
@@ -285,6 +316,7 @@ let calculate_type_values env = function
           "float",
           (fun v -> sprintf "Double_val(%s)" v),
           (fun v -> sprintf "caml_copy_double(%s)" v),
+          (fun v -> v),
           fun v -> v )
   | SimpleTypeRef "gboolean" ->
       Some
@@ -292,6 +324,7 @@ let calculate_type_values env = function
           "bool",
           (fun v -> sprintf "Bool_val(%s)" v),
           (fun v -> sprintf "(%s ? Val_true : Val_false)" v),
+          (fun v -> v),
           fun v -> v )
   | SimpleTypeRef "filename" ->
       Some
@@ -299,6 +332,7 @@ let calculate_type_values env = function
           "string",
           (fun v -> sprintf "String_val(%s)" v),
           (fun v -> sprintf "caml_copy_string(%s)" v),
+          (fun v -> v),
           fun v -> v )
   | SimpleTypeRef "any" -> None
   | SimpleTypeRef "utf8" ->
@@ -307,6 +341,7 @@ let calculate_type_values env = function
           "string",
           (fun v -> sprintf "String_val(%s)" v),
           (fun v -> sprintf "caml_copy_string(%s)" v),
+          (fun v -> v),
           fun v -> v )
   | SimpleTypeRef "none" ->
       Some
@@ -315,6 +350,7 @@ let calculate_type_values env = function
           (fun _ -> "void"),
           (* is this correct? *)
           (fun _ -> "Val_unit"),
+          (fun v -> v),
           fun v -> v )
   | SimpleTypeRef "GType" ->
       Some
@@ -322,6 +358,7 @@ let calculate_type_values env = function
           "int",
           (fun v -> sprintf "Int_val(%s)" v),
           (fun v -> sprintf "Val_int(%s)" v),
+          (fun v -> v),
           fun v -> v )
   | SimpleTypeRef x ->
       let ns, name = map_entity_name env.namespace x in
@@ -334,13 +371,15 @@ let calculate_type_values env = function
                 qualified_name env.namespace (ns, ml_name0 name),
                 (fun v -> sprintf "GObject_val(%s)" v),
                 (fun _ -> "void *"),
-                fun v -> sprintf "%s#as_%s" v (c_type_name er) )
+                (fun v -> sprintf "%s#as_%s" v (c_type_name er)),
+                (fun v -> sprintf "new %s (%s)" (ml_name0 er.name) v) )
         | Bitfield _ ->
             Some
               ( "int",
                 "int",
                 (fun v -> sprintf "Int_val(%s)" v),
                 (fun v -> sprintf "Val_int(%s)" v),
+                (fun v -> v),
                 fun v -> v )
         | Enumeration _ ->
             Some
@@ -348,6 +387,7 @@ let calculate_type_values env = function
                 qualified_name env.namespace (ns, ml_name0 er.name),
                 (fun v -> sprintf "%s_val(%s)" er.name v),
                 (fun v -> sprintf "Val_%s(%s)" er.name v),
+                (fun v -> v),
                 fun v -> v )
         (* The following are secondary concerns (for now)
            as they appear to use different layouts and
@@ -384,7 +424,8 @@ let calculate_ml_params env parameters =
                   ml_qualified_name,
                   ml_value_to_gobj_value_macro,
                   gobj_value_to_ml_value_macro,
-                  ml_arg_macro ) =
+                  ml_arg_macro,
+                  ml_return_type_macro ) =
              calculate_type_values env parameter.type_
            in
 
@@ -398,6 +439,7 @@ let calculate_ml_params env parameters =
                  ml_value_to_gobj_value_macro;
                  gobj_value_to_ml_value_macro;
                  ml_arg_macro;
+                 ml_return_type_macro;
                };
            }))
   |> opt_list_to_list_opt
@@ -408,7 +450,8 @@ let calculate_ml_return_value env (retvalue : returnValueRecord) =
            ml_qualified_name,
            ml_value_to_gobj_value_macro,
            gobj_value_to_ml_value_macro,
-           ml_arg_macro ) =
+           ml_arg_macro,
+           ml_return_type_macro ) =
       calculate_type_values env retvalue.type_
     in
     {
@@ -417,6 +460,7 @@ let calculate_ml_return_value env (retvalue : returnValueRecord) =
       ml_value_to_gobj_value_macro;
       gobj_value_to_ml_value_macro;
       ml_arg_macro;
+      ml_return_type_macro;
     })
 
 let make_ml_binding_params_string params =
@@ -425,6 +469,7 @@ let make_ml_binding_params_string params =
   | params ->
       CCList.to_string ~sep:" -> " (fun p -> p.type_mapping.ml_type_name) params
 
+(** Convert parameters to a string for a class constructor wrapper (parameters) *)
 let make_ml_constructor_params_string params =
   match params with
   | [] -> "()"
@@ -434,10 +479,25 @@ let make_ml_constructor_params_string params =
           sprintf "(%s: %s)" param.ml_name param.type_mapping.ml_qualified_name)
         params
 
-let make_ml_args params =
+
+(** Convert parameters to a string for a class constructor wrapper (arguments to binding) *)
+let make_ml_constructor_args_string params =
   match List.length params with
   | 0 -> "()"
   | _ ->
+      params
+      |> CCList.to_string ~sep:" " (fun (param : parameterMapping) ->
+             param.type_mapping.ml_arg_macro param.ml_name)
+
+(** Convert parameters to a string for a class method wrapper (parameters) *)
+let make_ml_method_params_string params = 
+  CCList.to_string ~sep:" "
+    (fun param ->
+      sprintf "(%s: %s)" param.ml_name param.type_mapping.ml_qualified_name)
+    params
+
+(** Convert parameters to a string for a class method wrapper (arguments to binding) *)
+let make_ml_method_args_string params =
       params
       |> CCList.to_string ~sep:" " (fun (param : parameterMapping) ->
              param.type_mapping.ml_arg_macro param.ml_name)
@@ -474,8 +534,13 @@ let print_class_constructor_bindings ml namespace class_name constructors env =
 let print_class_method_bindings ml namespace class_name methods env =
   List.iter
     (fun (m : classMethodRecord) ->
+      let object_parameter = {
+        transfer_ownership= TransferOwnershipNone;
+        name= "instance_";
+        type_= SimpleTypeRef class_name;
+      } in
       print_method_binding ~ml ~namespace ~class_name ~method_name:m.name
-        ~params:m.parameters ~return_value:m.return_value ~env)
+        ~params:(object_parameter::m.parameters) ~return_value:m.return_value ~env)
     methods
 
 (** print the GObject class module entries, which contains the bindings to C function implementations *)
@@ -492,23 +557,42 @@ let print_class_bindings ml all_classes env =
       ml "end")
     all_classes
 
-let print_class_definitions ml all_classes =
+let print_class_definition_parent ml namespace parent =
+  Option.iter
+    (fun parent ->
+      let parent_ns, parent_name = map_entity_name namespace parent in
+      let qualifier = if parent_ns <> namespace then parent_ns ^ "." else "" in
+      ml
+        (Format.sprintf "    inherit %s (%s.upcast self)"
+            (qualifier ^ ml_name0 parent_name)
+            (qualifier ^ parent_name ^ "_")))
+    parent
+
+let print_class_definition_methods ml class_name methods env = 
+  List.iter (
+    fun (constructor: classMethodRecord) -> 
+      let method_name = (constructor.name |> escape_ml_keyword) in
+      let params = calculate_ml_params env constructor.parameters in
+      let return_type = calculate_ml_return_value env constructor.return_value in
+      match params, return_type with
+      | Some params, Some return_type ->
+        let param_string = make_ml_method_params_string params in
+        let args_string = make_ml_method_args_string params in
+        let body = return_type.ml_return_type_macro (sprintf "%s_.%s self%s" class_name method_name args_string) in 
+        ml (sprintf "    method %s%s = %s" method_name param_string body);
+      | _ -> ml ("(* skipped method " ^ method_name ^ " due to unresolveable parameters / return type *)")
+  ) methods
+
+let print_class_definitions ml all_classes env =
   List.iter
     (fun ((ns, _), (er, cl)) ->
       ml
         (Format.sprintf "class %s  (self: %s) =" (ml_name0 er.name)
            (ml_name er.name));
       ml "  object";
-      Option.iter
-        (fun parent ->
-          let parent_ns, parent_name = map_entity_name ns parent in
-          let qualifier = if parent_ns <> ns then parent_ns ^ "." else "" in
-          ml
-            (Format.sprintf "    inherit %s (%s.upcast self)"
-               (qualifier ^ ml_name0 parent_name)
-               (qualifier ^ parent_name ^ "_")))
-        cl.parent;
+      print_class_definition_parent ml ns cl.parent;
       ml (Format.sprintf "    method as_%s = self" (c_type_name er));
+      print_class_definition_methods ml er.name cl.methods env;
       ml "  end")
     all_classes
 
@@ -519,7 +603,7 @@ let print_class_constructor ml namespace class_name
   match params with
   | Some params ->
       let param_string = make_ml_constructor_params_string params in
-      let args_text = make_ml_args params in
+      let args_text = make_ml_constructor_args_string params in
       let c_func = make_c_func_name namespace class_name constructor.name in
       ml
         (sprintf "  let %s %s = new %s (%s_.%s %s)" mlfunc param_string
@@ -570,7 +654,7 @@ let process_namespaces namespaces =
 
              print_class_bindings ml all_classes env;
              let all_classes_ordered = sort_by_dependencies all_classes in
-             print_class_definitions ml all_classes_ordered;
+             print_class_definitions ml all_classes_ordered env;
              print_class_constructor_modules ml all_classes_ordered env;
              Out_channel.close ml_file;
              Out_channel.close c_file)
