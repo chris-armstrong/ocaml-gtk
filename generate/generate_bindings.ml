@@ -3,35 +3,8 @@ open Gobject_model
 open Pretty_print
 open Escape
 open Entity
+open Dependencies
 
-(* module type EntityEnvironment = sig
-     val ml_name : string -> string
-     val ml_name0 : string -> string
-   end
-
-   module type EntityEnvironmentFactory = sig
-     val for_namespace : string -> (module EntityEnvironment)
-   end
-
-   let make_env_factory namespaces =
-     let entities = Entity.make_all_entities namespaces
-     in
-     (module struct
-       let for_namespace namespace =
-         (module struct
-           let ml_name0 name =
-             let entity_ns, entity_name = map_entity_name namespace name in
-             if entity_ns = namespace then ml_name0 entity_name
-             else entity_ns ^ "." ^ ml_name0 entity_name
-
-           let ml_name name =
-             let entity_ns, entity_name = map_entity_name namespace name in
-             if entity_ns = namespace then ml_name entity_name
-             else entity_ns ^ "." ^ ml_name entity_name
-         end : EntityEnvironment)
-     end : EntityEnvironmentFactory) *)
-
-(* Format.printf "structure %a\n" Gobject_model.pp_repositoryType rep *)
 
 type environment = {
   namespace : string;
@@ -169,49 +142,39 @@ let map_entity_relationship this_ns parent =
       else AnotherNamespaceParent (parent_ns, parent_name))
     parent
 
-let type_remaining_by_classes = fun classes ->
-  let class_names = List.map (fun c -> c.name) classes in
-  function 
-  | SimpleTypeRef x -> List.exists (fun c -> c = x) class_names
-  (* FIXME: complex type support will need to be resolved here *)
-  | _ -> true
+(* let type_remaining_by_classes namespace class_names
+  (owning_ns, owning_name) x =
+  List.exists (fun (ns, name) -> name = x && namespace = ns && not (owning_ns = namespace && owning_name = x)) class_names *)
 
-(** 
-  sort classes by their dependencies on one another *)
-let rec sort_by_dependencies ?(sorted_classes = []) = function
-  | [] -> List.rev sorted_classes
-  | all_classes -> (
-      let free_classes, stuck_classes =
-        List.partition
-          (fun ((ns, _), (_, { parent; constructor; methods; _ })) ->
-            let type_in_remaining = type_remaining_by_classes sorted_classes in
-            let parent_dependency = (match map_entity_relationship ns parent with
-            | NoParent -> true
-            | AnotherNamespaceParent _ -> true
-            | SameNamespaceParent parent_name ->
-                List.exists
-                  (fun ((_, name), (_, _)) -> name = parent_name)
-                  sorted_classes) in
-            let constructor_dependency = List.exists (fun constructor  ->
-              let parameter_types = List.map (fun (p: parameterRecord) -> p.type_) constructor.parameters in
-              let return_type = constructor.return_value.type_ in
-              List.exists (type_remaining_by_classes sorted_classes) (return_type::parameter_types) 
-            ) constructor in
-            let method_dependency = List.exists (fun method_ ->
-              let parameter_types = List.map (fun (p: parameterRecord) -> p.type_) method_.parameters in
-              let return_type = method_.return_value.type_ in
-              List.exists (type_remaining_by_classes sorted_classes) (return_type::parameter_types) 
-            ) methods in
-            parent_dependency && (!constructor_dependency || !method_dependency)
-          )
-          all_classes
-      in
-      match free_classes with
-      | [] -> raise (Failure "Recursive definitions")
-      | free_classes ->
-          sort_by_dependencies
-            ~sorted_classes:(List.concat [ free_classes; sorted_classes ])
-            stuck_classes)
+
+let pp_typeRef_list = Format.(pp_print_list ~pp_sep:pp_comma pp_typeRef)
+
+let rec extract_ref_types = function
+  | SimpleTypeRef x -> [x]
+  | ArrayTypeRef (_, refs) -> extract_ref_types refs
+  | ComplexTypeRef (_, refs) -> CCList.flat_map extract_ref_types refs
+
+let pp_string_list = Format.(pp_print_list ~pp_sep:pp_comma pp_print_string)
+
+
+let dependencies_for_class = (fun ((ns, _), (_, { parent; constructor; methods; _ })) ->
+    let parent_dependency = (match map_entity_relationship ns parent with
+    | NoParent -> []
+    | AnotherNamespaceParent _ -> []
+    | SameNamespaceParent parent_name -> [parent_name]) in
+    let constructor_dependencies = CCList.flat_map (fun (constructor: classConstructorRecord)  ->
+      let parameter_types = CCList.flat_map (fun (p: parameterRecord) -> extract_ref_types p.type_) constructor.parameters in
+      let return_type = extract_ref_types constructor.return_value.type_ in
+      (List.concat [return_type;parameter_types])
+    ) constructor in
+    let method_dependencies = methods |> CCList.flat_map (fun (method_: classMethodRecord) ->
+      let parameter_types = CCList.flat_map (fun (p: parameterRecord) -> extract_ref_types p.type_) method_.parameters in
+      let return_type = extract_ref_types method_.return_value.type_ in
+      (List.concat [return_type;parameter_types])
+      ) in
+    [parent_dependency; constructor_dependencies; method_dependencies] |> List.concat
+  )
+
 
 type typeMapping = {
   ml_type_name : string;
@@ -490,7 +453,7 @@ let make_ml_constructor_args_string params =
              param.type_mapping.ml_arg_macro param.ml_name)
 
 (** Convert parameters to a string for a class method wrapper (parameters) *)
-let make_ml_method_params_string params = 
+let make_ml_method_params_string params =
   CCList.to_string ~sep:" "
     (fun param ->
       sprintf "(%s: %s)" param.ml_name param.type_mapping.ml_qualified_name)
@@ -561,16 +524,18 @@ let print_class_definition_parent ml namespace parent =
   Option.iter
     (fun parent ->
       let parent_ns, parent_name = map_entity_name namespace parent in
+      let parent_ml_class_name = ml_name0 parent_name in
+      let parent_ml_module_name = parent_name ^ "_" in
       let qualifier = if parent_ns <> namespace then parent_ns ^ "." else "" in
       ml
         (Format.sprintf "    inherit %s (%s.upcast self)"
-            (qualifier ^ ml_name0 parent_name)
-            (qualifier ^ parent_name ^ "_")))
+            (qualifier ^ parent_ml_class_name)
+            (qualifier ^ parent_ml_module_name)))
     parent
 
-let print_class_definition_methods ml class_name methods env = 
+let print_class_definition_methods ml class_name methods env =
   List.iter (
-    fun (constructor: classMethodRecord) -> 
+    fun (constructor: classMethodRecord) ->
       let method_name = (constructor.name |> escape_ml_keyword) in
       let params = calculate_ml_params env constructor.parameters in
       let return_type = calculate_ml_return_value env constructor.return_value in
@@ -578,22 +543,44 @@ let print_class_definition_methods ml class_name methods env =
       | Some params, Some return_type ->
         let param_string = make_ml_method_params_string params in
         let args_string = make_ml_method_args_string params in
-        let body = return_type.ml_return_type_macro (sprintf "%s_.%s self%s" class_name method_name args_string) in 
+        let body = return_type.ml_return_type_macro (sprintf "%s_.%s self %s" class_name method_name args_string) in
         ml (sprintf "    method %s%s = %s" method_name param_string body);
       | _ -> ml ("(* skipped method " ^ method_name ^ " due to unresolveable parameters / return type *)")
   ) methods
 
+let print_class_definition_inner ml class_ env =
+  let ((ns, class_name), (er, cl)) = class_ in
+  ml
+    (Format.sprintf "%s  (self: %s) =" (ml_name0 class_name)
+        (ml_name class_name));
+  ml "  object";
+  print_class_definition_parent ml ns cl.parent;
+  ml (Format.sprintf "    method as_%s = self" (c_type_name er));
+  print_class_definition_methods ml er.name cl.methods env;
+  ml "  end"
+
+let sort_by_inheritance class_entities = class_entities |> List.sort (fun ((_, lname), (_, l)) ((_, rname), (_, r)) ->
+  match l.parent, r.parent with
+  | Some lparent, Some rparent -> if lparent = rname then 1 else if rparent = lname then -1 else 0
+  | Some lparent, None -> if (lparent = rname) then 1 else 0
+  | None, Some rparent -> if (rparent = lname) then -1 else 0
+  | None , None -> 0
+  )
+
 let print_class_definitions ml all_classes env =
   List.iter
-    (fun ((ns, _), (er, cl)) ->
-      ml
-        (Format.sprintf "class %s  (self: %s) =" (ml_name0 er.name)
-           (ml_name er.name));
-      ml "  object";
-      print_class_definition_parent ml ns cl.parent;
-      ml (Format.sprintf "    method as_%s = self" (c_type_name er));
-      print_class_definition_methods ml er.name cl.methods env;
-      ml "  end")
+    (fun record -> match record with
+      | Standalone class_ ->
+        (ml "class";
+        print_class_definition_inner ml class_ env;)
+      | Recursive classes ->
+        ml "class";
+        classes |> sort_by_inheritance |> List.iteri (fun i class_ ->
+          if i > 0 then ml "  and";
+          print_class_definition_inner ml class_ env;
+        );
+
+      )
     all_classes
 
 let print_class_constructor ml namespace class_name
@@ -610,16 +597,21 @@ let print_class_constructor ml namespace class_name
            (ml_name0 class_name) class_name mlfunc args_text)
   | _ -> ml (sprintf "(* constructor skipped %s *)" constructor.name)
 
-let print_class_constructor_modules ml all_classes env =
-  List.iter
-    (fun ((ns, _), (er, (cl : classRecord))) ->
+let print_class_constructor_module_inner ml ((ns, _), (er, (cl: classRecord))) env =
       ml "";
       ml (sprintf "module %s = struct" er.name);
       List.iter
         (fun (c : classConstructorRecord) ->
           print_class_constructor ml ns er.name c env)
         cl.constructor;
-      ml "end")
+      ml "end"
+
+let print_class_constructor_modules ml all_classes env =
+  List.iter
+    (function
+      | Standalone class_ -> print_class_constructor_module_inner ml class_ env
+      | Recursive classes -> List.iter (fun x -> print_class_constructor_module_inner ml x env) classes
+      )
     all_classes
 
 let process_namespaces namespaces =
@@ -653,7 +645,7 @@ let process_namespaces namespaces =
              let env = { namespace = name; all_entities } in
 
              print_class_bindings ml all_classes env;
-             let all_classes_ordered = sort_by_dependencies all_classes in
+             let all_classes_ordered = sort_by_dependencies dependencies_for_class all_classes in
              print_class_definitions ml all_classes_ordered env;
              print_class_constructor_modules ml all_classes_ordered env;
              Out_channel.close ml_file;
@@ -686,7 +678,5 @@ let generate () =
   process_namespaces all_namespaces;
   ()
 
-(* let namespaces = all_namespaces_from_repositories repositories in
-   process_namespaces namespaces *)
 
 let _ = generate ()
